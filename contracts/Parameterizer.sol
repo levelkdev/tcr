@@ -201,7 +201,7 @@ contract Parameterizer {
     address propOwner = prop.owner;
     uint propDeposit = prop.deposit;
 
-    
+
     // Before any token transfers, deleting the proposal will ensure that if reentrancy occurs the
     // prop.owner and prop.deposit will be 0, thereby preventing theft
    if (canBeSet(_propID)) {
@@ -382,4 +382,3 @@ contract Parameterizer {
     params[keccak256(_name)] = _value;
   }
 }
-
