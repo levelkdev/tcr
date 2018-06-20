@@ -16,8 +16,8 @@ const fs = require('fs')
 const config = JSON.parse(fs.readFileSync('../conf/config.json'))
 const paramConfig = config.paramDefaults
 
-const tradingPeriod = 60 * 60
-const timeToPriceResolution = 60 * 60 * 24 * 7 // a week
+const tradingPeriod = 60 * 60 // 1 hour
+const timeToPriceResolution = 60 * 60 * 2 // 2 hours
 const futarchyFundingAmount = paramConfig.minDeposit * 10 ** 18
 
 module.exports = (deployer) => {
