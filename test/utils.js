@@ -11,6 +11,7 @@ const ethRPC = new EthRPC(new HttpProvider('http://localhost:7545'));
 const ethQuery = new Eth(new HttpProvider('http://localhost:7545'));
 
 const PLCRVoting = artifacts.require('PLCRVoting.sol');
+const PLCRVotingChallenge = artifacts.require('PLCRVotingChallenge.sol');
 const Parameterizer = artifacts.require('Parameterizer.sol');
 const Registry = artifacts.require('Registry.sol');
 const Token = artifacts.require('EIP20.sol');
@@ -113,13 +114,22 @@ const utils = {
     return receipt.logs[0].args.challengeID;
   },
 
-  commitVote: async (pollID, voteOption, tokensArg, salt, voter) => {
-    const voting = await utils.getVoting();
-    const hash = utils.getVoteSaltHash(voteOption, salt);
-    await utils.as(voter, voting.requestVotingRights, tokensArg);
+  getPLCRChallenge: async (challengeID) => {
+    const registry = await Registry.deployed();
+    const challengeInfo = await registry.challenges(challengeID)
+    const plcrChallengeAddress = challengeInfo[0]
+    return PLCRVotingChallenge.at(plcrChallengeAddress)
+  },
 
-    const prevPollID = await voting.getInsertPointForNumTokens.call(voter, tokensArg, pollID);
-    await utils.as(voter, voting.commitVote, pollID, hash, tokensArg, prevPollID);
+  commitVote: async (pollID, voteOption, numTokens, salt, voter) => {
+    // const plcrChallenge = await utils.getPLCRChallenge(challengeID)
+    const token = await Token.deployed();
+    const voting = await PLCRVoting.deployed()
+    const prevPollID = await voting.getInsertPointForNumTokens.call(voter, numTokens, pollID);
+    await utils.as(voter, token.approve, voting.address, numTokens)
+    const hash = utils.getVoteSaltHash(voteOption, salt)
+    await utils.as(voter, voting.requestVotingRights, numTokens)
+    await utils.as(voter, voting.commitVote, pollID, hash, numTokens, prevPollID)
   },
 
   getReceiptValue: (receipt, arg) => receipt.logs[0].args[arg],

@@ -2,7 +2,8 @@ pragma solidity ^0.4.11;
 
 import "tokens/eip20/EIP20Interface.sol";
 import "./Parameterizer.sol";
-import "plcrvoting/PLCRVoting.sol";
+import "./Challenge/ChallengeFactoryInterface.sol";
+import "./Challenge/ChallengeInterface.sol";
 import "zeppelin/math/SafeMath.sol";
 
 contract Registry {
@@ -12,7 +13,8 @@ contract Registry {
     // ------
 
     event _Application(bytes32 indexed listingHash, uint deposit, uint appEndDate, string data, address indexed applicant);
-    event _Challenge(bytes32 indexed listingHash, uint challengeID, string data, uint commitEndDate, uint revealEndDate, address indexed challenger);
+    event _Challenge(bytes32 indexed listingHash, uint challengeID, address challengeAddress, string data, address indexed challenger);
+    event _ChallengeStarted(bytes32 indexed listingHash, uint challengeID);
     event _Deposit(bytes32 indexed listingHash, uint added, uint newTotal, address indexed owner);
     event _Withdrawal(bytes32 indexed listingHash, uint withdrew, uint newTotal, address indexed owner);
     event _ApplicationWhitelisted(bytes32 indexed listingHash);
@@ -20,9 +22,8 @@ contract Registry {
     event _ListingRemoved(bytes32 indexed listingHash);
     event _ListingWithdrawn(bytes32 indexed listingHash);
     event _TouchAndRemoved(bytes32 indexed listingHash);
-    event _ChallengeFailed(bytes32 indexed listingHash, uint indexed challengeID, uint rewardPool, uint totalTokens);
-    event _ChallengeSucceeded(bytes32 indexed listingHash, uint indexed challengeID, uint rewardPool, uint totalTokens);
-    event _RewardClaimed(uint indexed challengeID, uint reward, address indexed voter);
+    event _ChallengeFailed(bytes32 indexed listingHash, uint indexed challengeID);
+    event _ChallengeSucceeded(bytes32 indexed listingHash, uint indexed challengeID);
 
     using SafeMath for uint;
 
@@ -31,19 +32,16 @@ contract Registry {
         bool whitelisted;       // Indicates registry status
         address owner;          // Owner of Listing
         uint unstakedDeposit;   // Number of tokens in the listing not locked in a challenge
-        uint challengeID;       // Corresponds to a PollID in PLCRVoting
+        uint challengeID;       // Corresponds to challenge contract in the challenges mapping
+        address challenger;     // Address of the challenger
     }
 
     struct Challenge {
-        uint rewardPool;        // (remaining) Pool of tokens to be distributed to winning voters
-        address challenger;     // Owner of Challenge
-        bool resolved;          // Indication of if challenge is resolved
-        uint stake;             // Number of tokens at stake for either party during challenge
-        uint totalTokens;       // (remaining) Number of tokens used in voting by the winning side
-        mapping(address => bool) tokenClaims; // Indicates whether a voter has claimed a reward yet
+      ChallengeInterface challengeAddress;
+      bool resolved;
     }
 
-    // Maps challengeIDs to associated challenge data
+    // Maps challengeID to challenge contract address
     mapping(uint => Challenge) public challenges;
 
     // Maps listingHashes to associated listingHash data
@@ -51,30 +49,33 @@ contract Registry {
 
     // Global Variables
     EIP20Interface public token;
-    PLCRVoting public voting;
+    ChallengeFactoryInterface public challengeFactory;
     Parameterizer public parameterizer;
     string public name;
+    uint constant public INITIAL_CHALLENGE_NONCE = 0;
+    uint public challengeNonce;
 
     // ------------
     // CONSTRUCTOR:
     // ------------
 
     /**
-    @dev Contructor         Sets the addresses for token, voting, and parameterizer
-    @param _tokenAddr       Address of the TCR's intrinsic ERC20 token
-    @param _plcrAddr        Address of a PLCR voting contract for the provided token
-    @param _paramsAddr      Address of a Parameterizer contract 
+    @dev Contructor                 Sets the addresses for token, voting, and parameterizer
+    @param _tokenAddr               Address of the TCR's intrinsic ERC20 token
+    @param _challengeFactoryAddr    Address of a contract that will create challenges
+    @param _paramsAddr              Address of a Parameterizer contract
     */
     function Registry(
         address _tokenAddr,
-        address _plcrAddr,
+        address _challengeFactoryAddr,
         address _paramsAddr,
         string _name
     ) public {
         token = EIP20Interface(_tokenAddr);
-        voting = PLCRVoting(_plcrAddr);
+        challengeFactory = ChallengeFactoryInterface(_challengeFactoryAddr);
         parameterizer = Parameterizer(_paramsAddr);
         name = _name;
+        challengeNonce = INITIAL_CHALLENGE_NONCE;
     }
 
     // --------------------
@@ -153,7 +154,8 @@ contract Registry {
         require(isWhitelisted(_listingHash));
 
         // Cannot exit during ongoing challenge
-        require(listing.challengeID == 0 || challenges[listing.challengeID].resolved);
+        ChallengeInterface challenge = challengeAddr(_listingHash);
+        require(listing.challengeID == 0 || challenge.ended());
 
         // Remove listingHash & return tokens
         resetListing(_listingHash);
@@ -165,19 +167,19 @@ contract Registry {
     // -----------------------
 
     /**
-    @dev                Starts a poll for a listingHash which is either in the apply stage or
-                        already in the whitelist. Tokens are taken from the challenger and the
-                        applicant's deposits are locked.
+    @dev                Creates a new challenge for a listingHash which is either in the apply stage or
+                        already in the whitelist.
     @param _listingHash The listingHash being challenged, whether listed or in application
     @param _data        Extra data relevant to the challenge. Think IPFS hashes.
     */
-    function challenge(bytes32 _listingHash, string _data) external returns (uint challengeID) {
+    function createChallenge(bytes32 _listingHash, string _data) external returns (uint challengeID) {
         Listing storage listing = listings[_listingHash];
         uint deposit = parameterizer.get("minDeposit");
 
         // Listing must be in apply stage or already on the whitelist
         require(appWasMade(_listingHash) || listing.whitelisted);
         // Prevent multiple challenges
+        ChallengeInterface challenge = ChallengeInterface(challengeAddr(_listingHash));
         require(listing.challengeID == 0 || challenges[listing.challengeID].resolved);
 
         if (listing.unstakedDeposit < deposit) {
@@ -187,41 +189,21 @@ contract Registry {
             return 0;
         }
 
-        // Starts poll
-        uint pollID = voting.startPoll(
-            parameterizer.get("voteQuorum"),
-            parameterizer.get("commitStageLen"),
-            parameterizer.get("revealStageLen")
-        );
-
-        challenges[pollID] = Challenge({
-            challenger: msg.sender,
-            rewardPool: ((100 - parameterizer.get("dispensationPct")) * deposit) / 100,
-            stake: deposit,
-            resolved: false,
-            totalTokens: 0
-        });
-
-        // Updates listingHash to store most recent challenge
-        listing.challengeID = pollID;
-
-        // Locks tokens for listingHash during challenge
-        listing.unstakedDeposit -= deposit;
-
-        // Takes tokens from challenger
         require(token.transferFrom(msg.sender, this, deposit));
 
-        var (commitEndDate, revealEndDate,) = voting.pollMap(pollID);
+        challengeNonce = challengeNonce + 1;
+        ChallengeInterface challengeAddress = challengeFactory.createChallenge(msg.sender, listing.owner, this);
+        challenges[challengeNonce].challengeAddress = challengeAddress;
+        listing.challengeID = challengeNonce;
+        listing.challenger = msg.sender;
 
-        _Challenge(_listingHash, pollID, _data, commitEndDate, revealEndDate, msg.sender);
-        return pollID;
+        uint requiredTokenDeposit = challengeAddress.requiredTokenDeposit();
+        require(token.approve(challengeAddress, requiredTokenDeposit));
+
+        _Challenge(_listingHash, challengeNonce, challenges[challengeNonce].challengeAddress, _data, msg.sender);
+        return challengeNonce;
     }
 
-    /**
-    @dev                Updates a listingHash's status from 'application' to 'listing' or resolves
-                        a challenge if one exists.
-    @param _listingHash The listingHash whose status is being updated
-    */
     function updateStatus(bytes32 _listingHash) public {
         if (canBeWhitelisted(_listingHash)) {
           whitelistApplication(_listingHash);
@@ -232,55 +214,28 @@ contract Registry {
         }
     }
 
-    // ----------------
-    // TOKEN FUNCTIONS:
-    // ----------------
+    function resolveChallenge(bytes32 _listingHash) private {
+      Listing storage listing      = listings[_listingHash];
+      ChallengeInterface challenge = challengeAddr(_listingHash);
+      uint challengeID  = listings[_listingHash].challengeID;
+      uint winnerReward = (challenge.stake() * 2) - challenge.requiredTokenDeposit();
 
-    /**
-    @dev                Called by a voter to claim their reward for each completed vote. Someone
-                        must call updateStatus() before this can be called.
-    @param _challengeID The PLCR pollID of the challenge a reward is being claimed for
-    @param _salt        The salt of a voter's commit hash in the given poll
-    */
-    function claimReward(uint _challengeID, uint _salt) public {
-        // Ensures the voter has not already claimed tokens and challenge results have been processed
-        require(challenges[_challengeID].tokenClaims[msg.sender] == false);
-        require(challenges[_challengeID].resolved == true);
-
-        uint voterTokens = voting.getNumPassingTokens(msg.sender, _challengeID, _salt);
-        uint reward = voterReward(msg.sender, _challengeID, _salt);
-
-        // Subtracts the voter's information to preserve the participation ratios
-        // of other voters compared to the remaining pool of rewards
-        challenges[_challengeID].totalTokens -= voterTokens;
-        challenges[_challengeID].rewardPool -= reward;
-
-        // Ensures a voter cannot claim tokens again
-        challenges[_challengeID].tokenClaims[msg.sender] = true;
-
-        require(token.transfer(msg.sender, reward));
-
-        _RewardClaimed(_challengeID, reward, msg.sender);
+      if (!challenge.passed()) {
+          whitelistApplication(_listingHash);
+          listing.unstakedDeposit += winnerReward;
+          _ChallengeFailed(_listingHash, challengeID);
+      } else {
+          // Transfer the reward to the challenger
+          require(token.transfer(listing.challenger, winnerReward));
+          resetListing(_listingHash);
+          _ChallengeSucceeded(_listingHash, challengeID);
+      }
+      challenges[challengeID].resolved = true;
     }
 
     // --------
     // GETTERS:
     // --------
-
-    /**
-    @dev                Calculates the provided voter's token reward for the given poll.
-    @param _voter       The address of the voter whose reward balance is to be returned
-    @param _challengeID The pollID of the challenge a reward balance is being queried for
-    @param _salt        The salt of the voter's commit hash in the given poll
-    @return             The uint indicating the voter's reward
-    */
-    function voterReward(address _voter, uint _challengeID, uint _salt)
-    public view returns (uint) {
-        uint totalTokens = challenges[_challengeID].totalTokens;
-        uint rewardPool = challenges[_challengeID].rewardPool;
-        uint voterTokens = voting.getNumPassingTokens(_voter, _challengeID, _salt);
-        return (voterTokens * rewardPool) / totalTokens;
-    }
 
     /**
     @dev                Determines whether the given listingHash be whitelisted.
@@ -326,7 +281,7 @@ contract Registry {
     function challengeExists(bytes32 _listingHash) view public returns (bool) {
         uint challengeID = listings[_listingHash].challengeID;
 
-        return (listings[_listingHash].challengeID > 0 && !challenges[challengeID].resolved);
+        return (challengeID > 0 && !challenges[challengeID].resolved);
     }
 
     /**
@@ -338,74 +293,12 @@ contract Registry {
         uint challengeID = listings[_listingHash].challengeID;
 
         require(challengeExists(_listingHash));
-
-        return voting.pollEnded(challengeID);
-    }
-
-    /**
-    @dev                Determines the number of tokens awarded to the winning party in a challenge.
-    @param _challengeID The challengeID to determine a reward for
-    */
-    function determineReward(uint _challengeID) public view returns (uint) {
-        require(!challenges[_challengeID].resolved && voting.pollEnded(_challengeID));
-
-        // Edge case, nobody voted, give all tokens to the challenger.
-        if (voting.getTotalNumberOfTokensForWinningOption(_challengeID) == 0) {
-            return 2 * challenges[_challengeID].stake;
-        }
-
-        return (2 * challenges[_challengeID].stake) - challenges[_challengeID].rewardPool;
-    }
-
-    /**
-    @dev                Getter for Challenge tokenClaims mappings
-    @param _challengeID The challengeID to query
-    @param _voter       The voter whose claim status to query for the provided challengeID
-    */
-    function tokenClaims(uint _challengeID, address _voter) public view returns (bool) {
-      return challenges[_challengeID].tokenClaims[_voter];
+        return challengeAddr(_listingHash).ended();
     }
 
     // ----------------
     // PRIVATE FUNCTIONS:
     // ----------------
-
-    /**
-    @dev                Determines the winner in a challenge. Rewards the winner tokens and
-                        either whitelists or de-whitelists the listingHash.
-    @param _listingHash A listingHash with a challenge that is to be resolved
-    */
-    function resolveChallenge(bytes32 _listingHash) private {
-        uint challengeID = listings[_listingHash].challengeID;
-
-        // Calculates the winner's reward,
-        // which is: (winner's full stake) + (dispensationPct * loser's stake)
-        uint reward = determineReward(challengeID);
-
-        // Sets flag on challenge being processed
-        challenges[challengeID].resolved = true;
-
-        // Stores the total tokens used for voting by the winning side for reward purposes
-        challenges[challengeID].totalTokens =
-            voting.getTotalNumberOfTokensForWinningOption(challengeID);
-
-        // Case: challenge failed
-        if (voting.isPassed(challengeID)) {
-            whitelistApplication(_listingHash);
-            // Unlock stake so that it can be retrieved by the applicant
-            listings[_listingHash].unstakedDeposit += reward;
-
-            _ChallengeFailed(_listingHash, challengeID, challenges[challengeID].rewardPool, challenges[challengeID].totalTokens);
-        }
-        // Case: challenge succeeded or nobody voted
-        else {
-            resetListing(_listingHash);
-            // Transfer the reward to the challenger
-            require(token.transfer(challenges[challengeID].challenger, reward));
-
-            _ChallengeSucceeded(_listingHash, challengeID, challenges[challengeID].rewardPool, challenges[challengeID].totalTokens);
-        }
-    }
 
     /**
     @dev                Called by updateStatus() if the applicationExpiry date passed without a
@@ -434,12 +327,22 @@ contract Registry {
 
         // Deleting listing to prevent reentry
         address owner = listing.owner;
-        uint unstakedDeposit = listing.unstakedDeposit;
+        uint unstakedDeposit;
+        if (listing.challengeID > 0 && challengeAddr(_listingHash).passed()) {
+            unstakedDeposit = listing.unstakedDeposit - challengeAddr(_listingHash).stake();
+        } else {
+            unstakedDeposit = listing.unstakedDeposit;
+        }
         delete listings[_listingHash];
-        
+
         // Transfers any remaining balance back to the owner
-        if (unstakedDeposit > 0){
+        if (unstakedDeposit > 0) {
             require(token.transfer(owner, unstakedDeposit));
         }
+    }
+
+    function challengeAddr(bytes32 _listingHash) public returns (ChallengeInterface) {
+      Listing storage listing = listings[_listingHash];
+      return challenges[listing.challengeID].challengeAddress;
     }
 }
