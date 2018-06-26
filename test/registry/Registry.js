@@ -15,17 +15,12 @@ contract('Registry', () => {
       const registry = await Registry.deployed();
       const token = await Token.deployed();
       const parameterizer = await Parameterizer.deployed();
-      const plcrVoting = await PLCRVoting.deployed();
 
       assert.strictEqual((await registry.token.call()), token.address, 'The token storage ' +
         'variable is improperly initialized');
       assert.strictEqual(
         (await registry.parameterizer.call()), parameterizer.address,
         'The parameterizer storage variable is improperly initialized',
-      );
-      assert.strictEqual(
-        (await registry.voting.call()), plcrVoting.address,
-        'The voting storage variable is improperly initialized',
       );
       assert.strictEqual(
         (await registry.name.call()), config.name,
