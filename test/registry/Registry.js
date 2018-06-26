@@ -4,7 +4,6 @@
 const Registry = artifacts.require('Registry.sol');
 const Token = artifacts.require('EIP20.sol');
 const Parameterizer = artifacts.require('Parameterizer.sol');
-// const PLCRVoting = artifacts.require('PLCRVoting.sol');
 
 const fs = require('fs');
 

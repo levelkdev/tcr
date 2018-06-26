@@ -30,8 +30,8 @@ module.exports = (deployer, network, accounts) => {
 
     return deployer.deploy(
       PLCRVoting,
-      tokenAddress
-    )
+      tokenAddress,
+    );
   })
     .then(async () => {
       if (network === 'test' || network === 'coverage') {

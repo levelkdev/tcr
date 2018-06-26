@@ -39,7 +39,7 @@ module.exports = (deployer, network, accounts) => {
     );
   })
     .then(async () => {
-      if (network === 'development' || network === 'test' || network === 'coverage') {
+      if (network === 'test' || network === 'coverage') {
         await approveRegistryFor(accounts);
       }
     }).catch((err) => { throw err; });
