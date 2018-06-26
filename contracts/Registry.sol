@@ -174,7 +174,7 @@ contract Registry {
     */
     function createChallenge(bytes32 _listingHash, string _data) external returns (uint challengeID) {
         Listing storage listing = listings[_listingHash];
-        uint deposit = parameterizer.get("minDeposit");
+        uint minDeposit = parameterizer.get("minDeposit");
 
         // Listing must be in apply stage or already on the whitelist
         require(appWasMade(_listingHash) || listing.whitelisted);
@@ -182,14 +182,18 @@ contract Registry {
         ChallengeInterface challenge = ChallengeInterface(challengeAddr(_listingHash));
         require(listing.challengeID == 0 || challenges[listing.challengeID].resolved);
 
-        if (listing.unstakedDeposit < deposit) {
+        if (listing.unstakedDeposit < minDeposit) {
             // Not enough tokens, listingHash auto-delisted
             resetListing(_listingHash);
             _TouchAndRemoved(_listingHash);
             return 0;
         }
 
-        require(token.transferFrom(msg.sender, this, deposit));
+        // Locks tokens for listingHash during challenge
+        listing.unstakedDeposit -= minDeposit;
+
+        // Takes tokens from challenger
+        require(token.transferFrom(msg.sender, this, minDeposit));
 
         challengeNonce = challengeNonce + 1;
         ChallengeInterface challengeAddress = challengeFactory.createChallenge(msg.sender, listing.owner, this);
