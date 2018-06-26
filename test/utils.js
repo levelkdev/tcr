@@ -12,6 +12,7 @@ const ethQuery = new Eth(new HttpProvider('http://localhost:7545'));
 
 const PLCRVoting = artifacts.require('PLCRVoting.sol');
 const PLCRVotingChallenge = artifacts.require('PLCRVotingChallenge.sol');
+const PLCRVotingChallengeFactory = artifacts.require('PLCRVotingChallengeFactory.sol');
 const Parameterizer = artifacts.require('Parameterizer.sol');
 const Registry = artifacts.require('Registry.sol');
 const Token = artifacts.require('EIP20.sol');
@@ -23,8 +24,8 @@ const BN = small => new Eth.BN(small.toString(10), 10);
 
 const utils = {
   getVoting: async () => {
-    const registry = await Registry.deployed();
-    const votingAddr = await registry.voting.call();
+    const plcrVotingChallengeFactory = await PLCRVotingChallengeFactory.deployed();
+    const votingAddr = await plcrVotingChallengeFactory.voting.call();
     return PLCRVoting.at(votingAddr);
   },
 
@@ -110,7 +111,7 @@ const utils = {
 
   challengeAndGetPollID: async (domain, actor) => {
     const registry = await Registry.deployed();
-    const receipt = await utils.as(actor, registry.challenge, domain, '');
+    const receipt = await utils.as(actor, registry.createChallenge, domain, '');
     return receipt.logs[0].args.challengeID;
   },
 
