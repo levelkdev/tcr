@@ -2,6 +2,7 @@
 /* global assert contract artifacts */
 const Registry = artifacts.require('Registry.sol');
 const Token = artifacts.require('EIP20.sol');
+const PLCRVotingChallenge = artifacts.require('PLCRVotingChallenge.sol')
 
 const fs = require('fs');
 const BN = require('bignumber.js');
@@ -13,8 +14,8 @@ const utils = require('../utils.js');
 
 const bigTen = number => new BN(number.toString(10), 10);
 
-contract('Registry', (accounts) => {
-  describe('Function: claimReward', () => {
+contract('PLCRVotingChallenge', (accounts) => {
+  describe('Function: claimVoterReward', () => {
     const [applicant, challenger, voterAlice] = accounts;
     const minDeposit = bigTen(paramConfig.minDeposit);
 
@@ -30,6 +31,7 @@ contract('Registry', (accounts) => {
 
       // Challenge
       const pollID = await utils.challengeAndGetPollID(listing, challenger);
+      const plcrVotingChallenge = await utils.getPLCRVotingChallenge(listing);
 
       // Alice is so committed
       await utils.commitVote(pollID, '0', 500, '420', voterAlice);
@@ -43,8 +45,8 @@ contract('Registry', (accounts) => {
       await utils.as(applicant, registry.updateStatus, listing);
 
       // Alice claims reward
-      const aliceVoterReward = await registry.voterReward(voterAlice, pollID, '420');
-      await utils.as(voterAlice, registry.claimReward, pollID, '420');
+      const aliceVoterReward = await plcrVotingChallenge.voterReward(voterAlice, '420');
+      await utils.as(voterAlice, plcrVotingChallenge.claimVoterReward, '420');
 
       // Alice withdraws her voting rights
       await utils.as(voterAlice, voting.withdrawVotingRights, '500');
@@ -58,20 +60,6 @@ contract('Registry', (accounts) => {
       );
     });
 
-    it('should revert if challenge does not exist', async () => {
-      const registry = await Registry.deployed();
-      const listing = utils.getListingHash('reversion.net');
-      await utils.addToWhitelist(listing, minDeposit, applicant);
-
-      try {
-        const nonPollID = '666';
-        await utils.as(voterAlice, registry.claimReward, nonPollID, '420');
-        assert(false, 'should not have been able to claimReward for non-existant challengeID');
-      } catch (err) {
-        assert(utils.isEVMException(err), err.toString());
-      }
-    });
-
     it('should revert if provided salt is incorrect', async () => {
       const registry = await Registry.deployed();
       const listing = utils.getListingHash('sugar.net');
@@ -83,6 +71,7 @@ contract('Registry', (accounts) => {
       await utils.addToWhitelist(listing, minDeposit, applicant);
 
       const pollID = await utils.challengeAndGetPollID(listing, challenger);
+      const plcrVotingChallenge = await utils.getPLCRVotingChallenge(listing);
 
       // Alice is so committed
       await utils.commitVote(pollID, '0', 500, '420', voterAlice);
@@ -109,8 +98,8 @@ contract('Registry', (accounts) => {
       await utils.as(applicant, registry.updateStatus, listing);
 
       try {
-        await utils.as(voterAlice, registry.claimReward, pollID, '421');
-        assert(false, 'should not have been able to claimReward with the wrong salt');
+        await utils.as(voterAlice, plcrVotingChallenge.claimVoterReward, '421');
+        assert(false, 'should not have been able to claimVoterReward with the wrong salt');
       } catch (err) {
         assert(utils.isEVMException(err), err.toString());
       }
@@ -129,6 +118,7 @@ contract('Registry', (accounts) => {
 
       // Challenge
       const pollID = await utils.challengeAndGetPollID(listing, challenger);
+      const plcrVotingChallenge = await utils.getPLCRVotingChallenge(listing);
 
       // Alice is so committed
       await utils.commitVote(pollID, '0', 500, '420', voterAlice);
@@ -142,11 +132,11 @@ contract('Registry', (accounts) => {
       await utils.as(applicant, registry.updateStatus, listing);
 
       // Claim reward
-      await utils.as(voterAlice, registry.claimReward, pollID, '420');
+      await utils.as(voterAlice, plcrVotingChallenge.claimVoterReward, '420');
 
       try {
-        await utils.as(voterAlice, registry.claimReward, pollID, '420');
-        assert(false, 'should not have been able to call claimReward twice');
+        await utils.as(voterAlice, plcrVotingChallenge.claimVoterReward, '420');
+        assert(false, 'should not have been able to call claimVoterReward twice');
       } catch (err) {
         assert(utils.isEVMException(err), err.toString());
       }
@@ -180,6 +170,7 @@ contract('Registry', (accounts) => {
 
       // Challenge
       const pollID = await utils.challengeAndGetPollID(listing, challenger);
+      const plcrVotingChallenge = await utils.getPLCRVotingChallenge(listing);
 
       // Alice is so committed
       await utils.commitVote(pollID, '0', 500, '420', voterAlice);
@@ -187,11 +178,10 @@ contract('Registry', (accounts) => {
 
       // Alice is so revealing
       await utils.as(voterAlice, voting.revealVote, pollID, '0', '420');
-      await utils.increaseTime(paramConfig.revealStageLength + 1);
 
       try {
-        await utils.as(voterAlice, registry.claimReward, pollID, '420');
-        assert(false, 'should not have been able to claimReward for unresolved challenge');
+        await utils.as(voterAlice, plcrVotingChallenge.claimVoterReward, '420');
+        assert(false, 'should not have been able to claimVoterReward for unresolved challenge');
       } catch (err) {
         assert(utils.isEVMException(err), err.toString());
       }
