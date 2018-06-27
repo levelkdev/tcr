@@ -148,7 +148,7 @@ contract('Registry', (accounts) => {
       await parameterizer.processProposal(propID);
 
       const challengerStartingBal = await token.balanceOf.call(challenger);
-      utils.as(challenger, registry.challenge, listing, '');
+      utils.as(challenger, registry.createChallenge, listing, '');
       const challengerFinalBal = await token.balanceOf.call(challenger);
 
       assert(
@@ -189,7 +189,7 @@ contract('Registry', (accounts) => {
       await utils.challengeAndGetPollID(listing, challenger);
 
       try {
-        await utils.as(challenger, registry.challenge, listing, '');
+        await utils.as(challenger, registry.createChallenge, listing, '');
       } catch (err) {
         assert(utils.isEVMException(err), err.toString());
         return;
@@ -210,7 +210,7 @@ contract('Registry', (accounts) => {
       await token.approve(registry.address, '0', { from: challenger });
 
       try {
-        await utils.as(challenger, registry.challenge, listing, '');
+        await utils.as(challenger, registry.createChallenge, listing, '');
       } catch (err) {
         assert(utils.isEVMException(err), err.toString());
         return;
