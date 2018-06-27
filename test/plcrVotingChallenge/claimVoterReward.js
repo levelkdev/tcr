@@ -2,7 +2,6 @@
 /* global assert contract artifacts */
 const Registry = artifacts.require('Registry.sol');
 const Token = artifacts.require('EIP20.sol');
-const PLCRVotingChallenge = artifacts.require('PLCRVotingChallenge.sol')
 
 const fs = require('fs');
 const BN = require('bignumber.js');
