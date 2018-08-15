@@ -90,8 +90,6 @@ contract  FutarchyChallenge is ChallengeInterface {
       resolutionDate
     );
 
-    uint _startDate = now + 60;
-
     futarchyOracle = futarchyOracleFactory.createFutarchyOracle(
       token,
       _centralizedTimedOracle,
@@ -101,7 +99,7 @@ contract  FutarchyChallenge is ChallengeInterface {
       lmsrMarketMaker,
       0,
       tradingPeriod,
-      _startDate
+      now
     );
 
     isStarted = true;
